@@ -2,6 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from rest_framework.permissions import IsAuthenticated
+
 import logging
 from smtplib import SMTPException
 from django.conf import settings
@@ -13,6 +15,7 @@ from django.db import IntegrityError
 
 
 from .serializers import (
+    UserSerializer,
     RegisterSerializer,
     LoginSerializer,
     PasswordChangeSerializer,
@@ -71,12 +74,14 @@ class LoginView(APIView):
         if serializer.is_valid():
             user = serializer.validated_data["user"]
             token, _ = Token.objects.get_or_create(user=user)
+            profile_pic_url = request.build_absolute_uri(user.profile_pic.url) if user.profile_pic else ""
 
                 
             return Response({
                 "token": token.key,
                 "role": user.role,
                 "fullname": user.full_name if user.full_name else "",
+                "profile_pic": profile_pic_url,
                 "message": "User logged in successfully"
             }, status=status.HTTP_200_OK)
 
@@ -157,3 +162,25 @@ class ResetPasswordView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            request.user.auth_token.delete()
+            return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        serializer = UserSerializer(user, context={"request": request})
+        data = serializer.data
+        data["fullname"] = user.full_name if user.full_name else ""
+        data["profile_pic"] = request.build_absolute_uri(user.profile_pic.url) if user.profile_pic else ""
+        return Response(data, status=status.HTTP_200_OK)

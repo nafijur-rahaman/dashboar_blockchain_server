@@ -132,6 +132,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+MEDIA_URL = 'media/'
 
 # Frontend URL for reset-password links
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -145,3 +146,4 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL')
+
