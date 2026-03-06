@@ -6,7 +6,11 @@ from .views import (
     ForgotPasswordRequestView,
     ResetPasswordView,
     LogoutView,
+    UserListView,
     UserMeView,
+    BlockUserView,
+    UnblockUserView,
+    UserDetailView,
 )
 
 urlpatterns = [
@@ -20,4 +24,8 @@ urlpatterns = [
     
     
     path('change-password/', PasswordChangeView.as_view(), name='change_password'),
+    path('get-all-users/', UserListView.as_view(), name='get_all_users'),
+    path("users/<int:user_id>/", UserDetailView.as_view(), name="user_detail"),
+    path("block-user/<int:user_id>/",BlockUserView.as_view(), name="block_user"), 
+    path("unblock-user/<int:user_id>/", UnblockUserView.as_view(), name="unblock_user"),
 ]

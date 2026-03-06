@@ -6,11 +6,18 @@ ROLE_CHOICES = (
     ('user', 'User'),
 )
 
+STATUS_CHOICES = (
+    ('active', 'Active'),
+    ('inactive', 'Inactive'),
+    ('blocked', 'Blocked'),
+)
+
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=255, blank=True, null=True)
     phone  = models.CharField(max_length=20, blank=True, null=True)
     address = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
     profile_pic = models.ImageField(upload_to='profile_pics/', blank=True, null=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='user')
 

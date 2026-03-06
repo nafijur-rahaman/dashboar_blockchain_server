@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 
 import logging
 from smtplib import SMTPException
@@ -16,6 +17,7 @@ from django.db import IntegrityError
 
 from .serializers import (
     UserSerializer,
+    AdminUserSerializer,
     RegisterSerializer,
     LoginSerializer,
     PasswordChangeSerializer,
@@ -27,6 +29,68 @@ from .permissions import IsAdmin, IsUser, IsAdminOrUser
 
 logger = logging.getLogger(__name__)
 
+
+class UserListPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+# get all users view
+class UserListView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        users = User.objects.filter(role="user")
+        status_filter = request.query_params.get("status")
+        if status_filter in {"active", "inactive", "blocked"}:
+            users = users.filter(status=status_filter)
+        users = users.order_by("-id")
+        paginator = UserListPagination()
+        page = paginator.paginate_queryset(users, request, view=self)
+        serializer = AdminUserSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
+
+
+class UserDetailView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id, role="user")
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AdminUserSerializer(user, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class BlockUserView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id, role="user")
+            user.status = "blocked"
+            user.is_active = False
+            user.save(update_fields=["status", "is_active"])
+            return Response({"message": "User blocked successfully"}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class UnblockUserView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id, role="user")
+            user.status = "active"
+            user.is_active = True
+            user.save(update_fields=["status", "is_active"])
+            return Response({"message": "User unblocked successfully"}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
 # user register view
 class RegisterView(APIView):

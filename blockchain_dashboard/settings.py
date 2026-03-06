@@ -38,7 +38,8 @@ INSTALLED_APPS = [
     'corsheaders',
     
     #local apps
-    'users'
+    'users',
+    'wallet',
 ]
 
 AUTH_USER_MODEL = 'users.User'
