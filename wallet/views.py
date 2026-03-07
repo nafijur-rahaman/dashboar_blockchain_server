@@ -14,7 +14,7 @@ from .serializers import CryptoCoinSerializer, CryptoNetworkSerializer, WalletAs
 
 
 class CoinNetworkListAPI(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdmin]
     def get(self, request):
         coins = CryptoCoin.objects.filter(is_active=True)
         serializer = CryptoCoinSerializer(coins, many=True)
