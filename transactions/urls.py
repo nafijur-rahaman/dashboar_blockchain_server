@@ -10,6 +10,6 @@ urlpatterns = [
     path("transactions/get-my-balance/<int:coin_id>/", GetBalanceAPI.as_view(), name="get-balance"),
     
     path("admin/balance/update/", AdminBalanceUpdateAPI.as_view(), name="admin-balance-update"),
-    path("admin/deposits/", AllDepositRequestsAPI.as_view(), name="all-deposit-requests"),
+    path("admin/all-deposits/", AllDepositRequestsAPI.as_view(), name="all-deposit-requests"),
     path("admin/deposit/<int:pk>/action/", AdminDepositActionAPI.as_view(), name="admin-deposit-action"),
 ]

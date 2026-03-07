@@ -6,8 +6,9 @@ from rest_framework import status
 from decimal import Decimal
 from django.db import transaction
 
+from wallet.models import WalletAssignment
 from .models import DepositRequest, WalletBalance, Transaction
-from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer
+from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer,AdminGetDepositSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
 
@@ -148,9 +149,35 @@ class AllDepositRequestsAPI(APIView):
 
     def get(self, request):
 
-        deposits = DepositRequest.objects.all().order_by('-created_at')
+        deposits = DepositRequest.objects.select_related(
+            "user", "coin", "network"
+        ).order_by("-created_at")
 
-        serializer = DepositRequestSerializer(deposits, many=True)
+        user_ids = set(d.user_id for d in deposits)
+        coin_ids = set(d.coin_id for d in deposits)
+
+        # PRE-COMPUTE balances
+        balances = WalletBalance.objects.filter(
+            user_id__in=user_ids,
+            coin_id__in=coin_ids
+        ).values('user_id', 'coin_id', 'balance')
+        balance_map = {(b['user_id'], b['coin_id']): b['balance'] for b in balances}
+
+        # PRE-COMPUTE wallet addresses
+        wallet_addresses = WalletAssignment.objects.filter(
+            user_id__in=user_ids,
+            coin_id__in=coin_ids
+        ).values('user_id', 'coin_id', 'wallet_address')
+        wallet_map = {(w['user_id'], w['coin_id']): w['wallet_address'] for w in wallet_addresses}
+
+        serializer = AdminGetDepositSerializer(
+            deposits,
+            many=True,
+            context={
+                "balance_map": balance_map,
+                "wallet_map": wallet_map
+            }
+        )
 
         return Response({
             "message": "All deposit requests retrieved",
