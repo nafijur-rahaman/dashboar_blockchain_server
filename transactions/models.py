@@ -2,6 +2,8 @@ from django.db import models
 from django.conf import settings
 
 
+
+
 class WalletBalance(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='balances'
@@ -119,3 +121,52 @@ class DepositRequest(models.Model):
     
     def __str__(self):
         return f"{self.user.email} - {self.coin.symbol}: {self.amount} ({self.status})"
+
+
+class WithdrawRequest(models.Model):
+
+    STATUS_CHOICES = (
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="withdraw_requests"
+    )
+
+    coin = models.ForeignKey(
+        "wallet.CryptoCoin",
+        on_delete=models.PROTECT
+    )
+
+    network = models.ForeignKey(
+        "wallet.CryptoNetwork",
+        on_delete=models.PROTECT
+    )
+ 
+    wallet_address = models.CharField(max_length=255)
+
+    amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=8
+    )
+    convert_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        null=True,
+        blank=True
+    )
+
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default="pending"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.coin.symbol} - {self.amount}"

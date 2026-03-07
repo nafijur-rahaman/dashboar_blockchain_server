@@ -7,8 +7,8 @@ from decimal import Decimal
 from django.db import transaction
 
 from wallet.models import WalletAssignment
-from .models import DepositRequest, WalletBalance, Transaction
-from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer,AdminGetDepositSerializer
+from .models import DepositRequest, WalletBalance, Transaction, WithdrawRequest
+from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer,AdminGetDepositSerializer, WithdrawRequestSerializer,AdminWithdrawSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
 
@@ -272,3 +272,161 @@ class AdminDepositActionAPI(APIView):
                 {"error": "Deposit processing failed", "details": str(e)},
                 status=500
             )
+            
+
+
+class CreateWithdrawRequestAPI(APIView):
+    permission_classes = [IsUser]
+
+    def post(self, request):
+
+        serializer = WithdrawRequestSerializer(data=request.data)
+
+        if serializer.is_valid():
+
+            coin = serializer.validated_data["coin"]
+            amount = serializer.validated_data["amount"]
+
+            try:
+                with transaction.atomic():
+
+                    balance = WalletBalance.objects.select_for_update().get(
+                        user=request.user,
+                        coin=coin
+                    )
+
+                    if balance.balance < amount:
+                        return Response({
+                            "error": "Insufficient balance"
+                        }, status=400)
+
+                    # deduct balance immediately
+                    balance.balance -= amount
+                    balance.save()
+
+                    withdraw = serializer.save(user=request.user)
+                    
+                    Transaction.objects.create(
+                        user=request.user,
+                        coin=coin,
+                        amount=amount,
+                        reference = f"Withdraw request Id {withdraw.id}",
+                        transaction_type="withdraw",
+                        status="pending"
+                    )
+
+            except WalletBalance.DoesNotExist:
+                return Response({
+                    "error": "No balance available"
+                }, status=400)
+
+            return Response({
+                "message": "Withdraw request submitted",
+                "data": WithdrawRequestSerializer(withdraw).data
+            }, status=201)
+
+        return Response(serializer.errors, status=400)
+    
+
+class MyWithdrawRequestsAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+
+        withdraws = WithdrawRequest.objects.filter(
+            user=request.user
+        ).order_by("-created_at")
+
+        serializer = WithdrawRequestSerializer(withdraws, many=True)
+
+        return Response(serializer.data)
+    
+
+class AdminWithdrawListAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+
+        withdraws = WithdrawRequest.objects.select_related(
+            "user", "coin", "network"
+        ).order_by("-created_at")
+
+        user_ids = set(w.user_id for w in withdraws)
+        coin_ids = set(w.coin_id for w in withdraws)
+
+        balances = WalletBalance.objects.filter(
+            user_id__in=user_ids,
+            coin_id__in=coin_ids
+        ).values("user_id", "coin_id", "balance")
+
+        balance_map = {
+            (b["user_id"], b["coin_id"]): b["balance"]
+            for b in balances
+        }
+
+        serializer = AdminWithdrawSerializer(
+            withdraws,
+            many=True,
+            context={"balance_map": balance_map}
+        )
+
+        return Response({
+            "message": "All withdraw requests retrieved",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    
+
+
+class AdminWithdrawActionAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, pk):
+
+        action = request.data.get("action")
+
+        try:
+            withdraw = WithdrawRequest.objects.select_related(
+                "user", "coin"
+            ).get(pk=pk)
+
+            if withdraw.status != "pending":
+                return Response({"error": "Already processed"}, status=400)
+
+            with transaction.atomic():
+
+                if action == "approve":
+
+                    withdraw.status = "approved"
+                    withdraw.save()
+
+                    Transaction.objects.filter(
+                        reference=f"Withdraw request Id {withdraw.id}"
+                    ).update(status="success")
+
+                    return Response({"message": "Withdraw approved"})
+
+
+                elif action == "reject":
+
+                    balance = WalletBalance.objects.select_for_update().get(
+                        user=withdraw.user,
+                        coin=withdraw.coin
+                    )
+
+                    balance.balance += withdraw.amount
+                    balance.save()
+
+                    withdraw.status = "rejected"
+                    withdraw.save()
+
+                    Transaction.objects.filter(
+                        reference=f"Withdraw request Id {withdraw.id}"
+                    ).update(status="failed")
+
+                    return Response({"message": "Withdraw rejected"})
+
+
+                return Response({"error": "Invalid action"}, status=400)
+
+        except WithdrawRequest.DoesNotExist:
+            return Response({"error": "Withdraw not found"}, status=404)
