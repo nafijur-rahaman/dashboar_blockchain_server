@@ -42,3 +42,6 @@ class WalletAssignment(models.Model):
 
     class Meta:
         unique_together = ['user', 'coin', 'network']
+    
+    def __str__(self):
+        return f"{self.user.full_name} - {self.coin.symbol} ({self.network.network_name})"
