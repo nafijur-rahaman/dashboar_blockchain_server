@@ -5,6 +5,8 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from .models import User
+from transactions.models import WalletBalance
+from django.db import models
 
 
 # user serializer
@@ -16,9 +18,16 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
+    balance = serializers.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        source="total_balance",
+        read_only=True
+    )
+
     class Meta:
         model = User
-        fields = ["id", "full_name", "email", "status"]
+        fields = ["id", "full_name", "email", "balance", "status"]
 
 # user register serializer
 

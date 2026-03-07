@@ -13,6 +13,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.db import IntegrityError
+from django.db.models.functions import Coalesce
 
 
 from .serializers import (
@@ -26,6 +27,7 @@ from .serializers import (
 )
 from .models import User
 from .permissions import IsAdmin, IsUser, IsAdminOrUser
+from django.db.models import Sum,Value,DecimalField
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +37,29 @@ class UserListPagination(PageNumberPagination):
     page_size_query_param = "page_size"
     max_page_size = 100
 
-
-# get all users view
 class UserListView(APIView):
     permission_classes = [IsAdmin]
 
     def get(self, request):
         users = User.objects.filter(role="user")
+
         status_filter = request.query_params.get("status")
         if status_filter in {"active", "inactive", "blocked"}:
             users = users.filter(status=status_filter)
+
+
+        users = users.annotate(
+            total_balance=Coalesce(
+                Sum("balances__balance"),
+                Value(0, output_field=DecimalField(max_digits=20, decimal_places=8))
+            )
+        )
+
         users = users.order_by("-id")
+
         paginator = UserListPagination()
         page = paginator.paginate_queryset(users, request, view=self)
+
         serializer = AdminUserSerializer(page, many=True, context={"request": request})
         return paginator.get_paginated_response(serializer.data)
 
