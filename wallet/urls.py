@@ -1,9 +1,16 @@
 from django.urls import path
-from .views import AdminWalletListAPI, AdminWalletDetailAPI, CoinNetworkListAPI,MyWalletsAPI
+from .views import AdminWalletControlAPI, AdminWalletDetailAPI, CoinNetworkListAPI, CryptoCoinView,MyWalletsAPI
 
 urlpatterns = [
-    path('coins-networks/', CoinNetworkListAPI.as_view(), name='coin-network-list'),
-    path('admin/wallets/', AdminWalletListAPI.as_view(), name='admin-wallet-list'),
+    path('admin/all-coins/', CoinNetworkListAPI.as_view(), name='coin-list'),
+    path("admin/create-coin/", CryptoCoinView.as_view(), name="create-coin"),
+    path('admin/update-coin/<int:pk>/', CryptoCoinView.as_view(), name='update-coin'),
+    path('admin/delete-coin/<int:pk>/', CryptoCoinView.as_view(), name='delete-coin'),
+    
+    
+    path('admin/wallets/', AdminWalletControlAPI.as_view(), name='admin-wallet-list'),
     path('admin/wallets/<int:pk>/', AdminWalletDetailAPI.as_view(), name='admin-wallet-detail'),
-    path('my-wallets/', MyWalletsAPI.as_view(), name='my-wallets'),
+    
+    
+    path('user/my-wallets/', MyWalletsAPI.as_view(), name='my-wallets'),
 ]

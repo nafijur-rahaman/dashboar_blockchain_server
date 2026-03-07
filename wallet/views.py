@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from django.db import IntegrityError
 from users.permissions import IsAdmin, IsUser
 
 
@@ -20,23 +21,87 @@ class CoinNetworkListAPI(APIView):
         return Response(serializer.data)
 
 
-class AdminWalletControlAPI(APIView):
+class CryptoCoinView(APIView):
     permission_classes = [IsAdmin]
-
-    def get(self, request):
-        assignments = WalletAssignment.objects.filter(is_active=True).order_by('-created_at')
-        serializer = WalletAssignmentSerializer(assignments, many=True)
-        return Response(serializer.data)
-
+    
     def post(self, request):
-        serializer = WalletAssignmentSerializer(data=request.data)
+        serializer = CryptoCoinSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
+    def patch(self, request, pk):
+        try:
+            coin = CryptoCoin.objects.get(pk=pk)
+            serializer = CryptoCoinSerializer(coin, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except CryptoCoin.DoesNotExist:
+            return Response({"error": "Coin not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+    def delete(self, request, pk):
+        try:
+            coin = CryptoCoin.objects.get(pk=pk)
+            coin.is_active = False
+            coin.save()
+            return Response({"message": "Coin deactivated"}, status=status.HTTP_200_OK)
+        except CryptoCoin.DoesNotExist:
+            return Response({"error": "Coin not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class AdminWalletControlAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        assignments = WalletAssignment.objects.select_related(
+            'user',
+            'coin',
+            'network',
+        ).order_by('-created_at')
+        serializer = WalletAssignmentSerializer(assignments, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        data = request.data.copy()
+        user_id = data.get('user')
+        coin_id = data.get('coin')
+        network_id = data.get('network')
+
+        if user_id and coin_id and network_id:
+            existing_inactive = WalletAssignment.objects.filter(
+                user_id=user_id,
+                coin_id=coin_id,
+                network_id=network_id,
+                is_active=False,
+            ).first()
+
+            if existing_inactive:
+                serializer = WalletAssignmentSerializer(
+                    existing_inactive,
+                    data=data,
+                    partial=True,
+                )
+                if serializer.is_valid():
+                    serializer.save(is_active=True)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = WalletAssignmentSerializer(data=data)
+        if serializer.is_valid():
+            try:
+                serializer.save()
+            except IntegrityError:
+                return Response(
+                    {"error": "Duplicate wallet assignment is not allowed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
 class AdminWalletDetailAPI(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdmin]
 
 
     def get(self, request, pk):

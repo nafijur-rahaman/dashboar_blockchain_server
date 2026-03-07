@@ -8,11 +8,41 @@ class CryptoNetworkSerializer(serializers.ModelSerializer):
         fields = ['id', 'network_name']
         
 class CryptoCoinSerializer(serializers.ModelSerializer):
-    networks = CryptoNetworkSerializer(many=True, read_only=True)
+    networks = CryptoNetworkSerializer(many=True, required=False)
 
     class Meta:
         model = CryptoCoin
         fields = ['id', 'name', 'symbol', 'is_active', 'networks']
+
+    def create(self, validated_data):
+        networks_data = validated_data.pop('networks', [])
+        coin = CryptoCoin.objects.create(**validated_data)
+
+        for network in networks_data:
+            network_name = (network.get('network_name') or '').strip()
+            if network_name:
+                CryptoNetwork.objects.create(coin=coin, network_name=network_name)
+
+        return coin
+
+    def update(self, instance, validated_data):
+        networks_data = validated_data.pop('networks', None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if networks_data is not None:
+            instance.networks.all().delete()
+            for network in networks_data:
+                network_name = (network.get('network_name') or '').strip()
+                if network_name:
+                    CryptoNetwork.objects.create(
+                        coin=instance,
+                        network_name=network_name,
+                    )
+
+        return instance
 
 class WalletAssignmentSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField(source='user.full_name')
@@ -30,16 +60,47 @@ class WalletAssignmentSerializer(serializers.ModelSerializer):
             'network',
             'network_name',
             'wallet_address',
-            'is_active'
+            'is_active',
+            'created_at',
         ]
 
     def validate(self, data):
-        coin = data.get('coin')
-        network = data.get('network')
+        instance = getattr(self, 'instance', None)
+
+        coin = data.get('coin') or getattr(instance, 'coin', None)
+        network = data.get('network') or getattr(instance, 'network', None)
+        user = data.get('user') or getattr(instance, 'user', None)
+        wallet_address = data.get('wallet_address') or getattr(instance, 'wallet_address', '')
+        is_active = data.get('is_active')
+        if is_active is None:
+            is_active = getattr(instance, 'is_active', True)
+
+        if not coin or not network:
+            raise serializers.ValidationError("Coin and network are required.")
 
         if network.coin != coin:
             raise serializers.ValidationError(
                 "Selected network does not belong to this coin."
             )
+
+        # Only enforce duplicate checks for active assignments.
+        if is_active:
+            qs = WalletAssignment.objects.filter(
+                coin=coin,
+                network=network,
+                is_active=True,
+            )
+            if instance:
+                qs = qs.exclude(pk=instance.pk)
+
+            if user and qs.filter(user=user).exists():
+                raise serializers.ValidationError(
+                    "This user already has an active wallet for the selected coin/network."
+                )
+
+            if wallet_address and qs.filter(wallet_address=wallet_address).exists():
+                raise serializers.ValidationError(
+                    "This wallet address is already assigned for the selected coin/network."
+                )
 
         return data
