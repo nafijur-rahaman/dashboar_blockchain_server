@@ -35,6 +35,7 @@ class DepositRequestSerializer(serializers.ModelSerializer):
 class AdminGetDepositSerializer(serializers.ModelSerializer):
     user_name = serializers.ReadOnlyField(source="user.full_name")
     user_email = serializers.ReadOnlyField(source="user.email")
+    user_status = serializers.ReadOnlyField(source="user.status")
     coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
     network_name = serializers.ReadOnlyField(source="network.network_name")
 
@@ -50,6 +51,7 @@ class AdminGetDepositSerializer(serializers.ModelSerializer):
             'user',
             'user_name',
             'user_email',
+            'user_status',
             'coin',
             'coin_symbol',
             'network',
@@ -117,7 +119,7 @@ class AdminWithdrawSerializer(serializers.ModelSerializer):
     network_name = serializers.ReadOnlyField(source="network.network_name")
     user_name = serializers.ReadOnlyField(source="user.full_name")
     user_email = serializers.ReadOnlyField(source="user.email")
-
+    user_status = serializers.ReadOnlyField(source="user.status")
     user_balance = serializers.SerializerMethodField()
 
     class Meta:
@@ -127,6 +129,7 @@ class AdminWithdrawSerializer(serializers.ModelSerializer):
             "user",
             "user_name",
             "user_email",
+            "user_status",
             "coin",
             "coin_symbol",
             "network",
