@@ -3,14 +3,57 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from django.db import transaction
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
 
 from wallet.models import WalletAssignment
 from .models import DepositRequest, WalletBalance, Transaction, WithdrawRequest
 from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer,AdminGetDepositSerializer, WithdrawRequestSerializer,AdminWithdrawSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
+
+COINGECKO_ID_BY_SYMBOL = {
+    "BTC": "bitcoin",
+    "BITCOIN": "bitcoin",
+    "ETH": "ethereum",
+    "ETHEREUM": "ethereum",
+    "ETC": "ethereum-classic",
+    "ETHEREUMCLASSIC": "ethereum-classic",
+    "ETHEREUM_CLASSIC": "ethereum-classic",
+    "USDT": "tether",
+    "TETHER": "tether",
+}
+
+
+def get_coin_usd_rate(symbol: str):
+    normalized_symbol = (symbol or "").upper().replace(" ", "").replace("-", "").replace("/", "_")
+
+    if normalized_symbol == "USDT":
+        return Decimal("1")
+
+    coin_id = COINGECKO_ID_BY_SYMBOL.get(normalized_symbol)
+    if not coin_id:
+        return None
+
+    params = urlencode({"ids": coin_id, "vs_currencies": "usd"})
+    url = f"https://api.coingecko.com/api/v3/simple/price?{params}"
+
+    try:
+        with urlopen(url, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        usd_value = payload.get(coin_id, {}).get("usd")
+        if usd_value is None:
+            return None
+        usd_rate = Decimal(str(usd_value))
+        if usd_rate <= 0:
+            return None
+        return usd_rate
+    except (HTTPError, URLError, TimeoutError, ValueError, InvalidOperation):
+        return None
 
 
 
@@ -286,6 +329,21 @@ class CreateWithdrawRequestAPI(APIView):
 
             coin = serializer.validated_data["coin"]
             amount = serializer.validated_data["amount"]
+            usd_rate = get_coin_usd_rate(getattr(coin, "symbol", ""))
+
+            if usd_rate is None:
+                return Response({
+                    "error": "Live conversion rate unavailable. Please try again in a moment."
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            convert_amount = (Decimal(amount) / usd_rate).quantize(
+                Decimal("0.00000001"),
+                rounding=ROUND_DOWN,
+            )
+            if convert_amount <= 0:
+                return Response({
+                    "error": "Amount is too small after conversion."
+                }, status=400)
 
             try:
                 with transaction.atomic():
@@ -304,7 +362,10 @@ class CreateWithdrawRequestAPI(APIView):
                     balance.balance -= amount
                     balance.save()
 
-                    withdraw = serializer.save(user=request.user)
+                    withdraw = serializer.save(
+                        user=request.user,
+                        convert_amount=convert_amount,
+                    )
                     
                     Transaction.objects.create(
                         user=request.user,

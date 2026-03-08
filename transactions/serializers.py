@@ -89,7 +89,7 @@ class WithdrawRequestSerializer(serializers.ModelSerializer):
             "created_at"
         ]
 
-        read_only_fields = ["status", "created_at", "user"]
+        read_only_fields = ["status", "created_at", "user", "convert_amount"]
 
     def validate_amount(self, value):
         if value <= 0:
