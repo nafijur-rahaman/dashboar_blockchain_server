@@ -25,4 +25,5 @@ urlpatterns = [
     path("admin/dashboard-stats/", AdminDashboardStatsAPI.as_view(), name="admin-dashboard-stats"),
     path("admin/transactions/<int:pk>/", AdminTransactionDetailAPI.as_view(), name="admin-transaction-detail"),
     path("admin/withdraws/<int:pk>/", AdminWithdrawDetailAPI.as_view(), name="admin-withdraw-detail"),
+    path("user/dashboard-stats/", UserDashboardStatsAPI.as_view(), name="user-dashboard-stats"),
 ]

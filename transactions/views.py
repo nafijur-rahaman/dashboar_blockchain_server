@@ -789,3 +789,81 @@ class AdminWithdrawDetailAPI(APIView):
             "status": withdraw.status,
             "created_at": withdraw.created_at.isoformat() if withdraw.created_at else None,
         }, status=status.HTTP_200_OK)
+
+
+class UserDashboardStatsAPI(APIView):
+    permission_classes = [IsUser]
+
+    def get(self, request):
+        user = request.user
+
+        balances = (
+            WalletBalance.objects.filter(user=user)
+            .select_related("coin")
+        )
+        symbols = {
+            (getattr(b.coin, "symbol", "") or "").upper()
+            for b in balances
+        }
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        total_balance_usd = Decimal("0")
+        coin_balances = []
+        for balance in balances:
+            symbol = (getattr(balance.coin, "symbol", "") or "").upper()
+            rate = price_map.get(symbol)
+            usd_value = balance.balance * rate if rate else Decimal("0")
+            total_balance_usd += usd_value
+            coin_balances.append({
+                "symbol": symbol,
+                "amount": str(balance.balance),
+                "usd_value": str(usd_value),
+            })
+
+        pending_withdrawals = (
+            WithdrawRequest.objects.filter(user=user, status="pending")
+            .values("coin__symbol")
+            .annotate(total=Sum("amount"))
+        )
+        pending_symbols = [row["coin__symbol"] for row in pending_withdrawals if row["coin__symbol"]]
+        pending_price_map = get_coin_prices(pending_symbols) if pending_symbols else {}
+        pending_withdrawals_usd = Decimal("0")
+        for row in pending_withdrawals:
+            symbol = (row["coin__symbol"] or "").upper()
+            amount = row["total"] or Decimal("0")
+            rate = pending_price_map.get(symbol)
+            if rate:
+                pending_withdrawals_usd += amount * rate
+
+        transactions = (
+            Transaction.objects.filter(user=user)
+            .select_related("coin")
+            .order_by("-created_at")[:8]
+        )
+        tx_symbols = {tx.coin.symbol.upper() for tx in transactions if tx.coin_id}
+        tx_price_map = get_coin_prices(tx_symbols) if tx_symbols else {}
+
+        recent_transactions = []
+        for tx in transactions:
+            symbol = (tx.coin.symbol or "").upper()
+            rate = tx_price_map.get(symbol)
+            amount_usd = tx.amount * rate if rate else Decimal("0")
+            recent_transactions.append({
+                "id": tx.id,
+                "coin_symbol": symbol,
+                "amount": str(tx.amount),
+                "amount_usd": str(amount_usd),
+                "transaction_type": tx.transaction_type,
+                "status": tx.status,
+                "reference": tx.reference,
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+            })
+
+        return Response({
+            "summary": {
+                "total_balance_usd": str(total_balance_usd),
+                "pending_withdrawals_usd": str(pending_withdrawals_usd),
+            },
+            "coin_balances": coin_balances,
+            "recent_transactions": recent_transactions,
+        }, status=status.HTTP_200_OK)
