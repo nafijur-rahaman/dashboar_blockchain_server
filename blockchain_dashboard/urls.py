@@ -8,6 +8,7 @@ urlpatterns = [
     path('api/', include('users.urls')),
     path('api/wallet/', include('wallet.urls')),
     path('api/', include('transactions.urls')),
+    path('api/tickets/', include('tickets.urls')),
     
 
 ]
