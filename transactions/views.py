@@ -5,6 +5,8 @@ from rest_framework import status
 
 from decimal import Decimal, ROUND_DOWN
 from django.db import transaction
+from django.db.models import Sum, Count
+from django.utils import timezone
 
 from wallet.models import CryptoCoin, WalletAssignment
 from wallet.services.pricing import get_coin_prices
@@ -13,6 +15,8 @@ from .models import DepositRequest, WalletBalance, Transaction, WithdrawRequest
 from .serializers import BalanceAdjustmentSerializer, DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer, AdminGetDepositSerializer, WithdrawRequestSerializer, AdminWithdrawSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
+from users.models import User
+from tickets.models import Ticket
 from notifications.utils import create_admin_notification, create_user_notification
 
 # ------------------ Admin: Update Wallet Balance ------------------#
@@ -565,3 +569,223 @@ class AdminWithdrawActionAPI(APIView):
 
         except WithdrawRequest.DoesNotExist:
             return Response({"error": "Withdraw not found"}, status=404)
+
+
+class AdminDashboardStatsAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        today = timezone.localdate()
+
+        # ---- Users ----
+        users_qs = User.objects.filter(role="user")
+        total_users = users_qs.count()
+        new_users_today = users_qs.filter(date_joined__date=today).count()
+
+        # ---- Wallet balances ----
+        balance_rows = (
+            WalletBalance.objects.filter(user__role="user")
+            .values("coin__symbol")
+            .annotate(total=Sum("balance"))
+        )
+        balance_symbols = [row["coin__symbol"] for row in balance_rows if row["coin__symbol"]]
+
+        # ---- Pending deposits/withdrawals and latest transactions ----
+        pending_withdraw_rows = (
+            WithdrawRequest.objects.filter(status="pending")
+            .values("coin__symbol")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+        pending_deposit_rows = (
+            DepositRequest.objects.filter(status="pending")
+            .values("coin__symbol")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+        todays_deposit_rows = (
+            DepositRequest.objects.filter(status="approved", created_at__date=today)
+            .values("coin__symbol")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+        latest_withdraws = WithdrawRequest.objects.select_related("user", "coin").order_by("-created_at")[:5]
+        recent_transactions = Transaction.objects.select_related("user", "coin").order_by("-created_at")[:7]
+
+        # ---- Collect all unique symbols for one get_coin_prices call ----
+        symbols = set(balance_symbols)
+        symbols.update(row['coin__symbol'] for row in pending_withdraw_rows if row['coin__symbol'])
+        symbols.update(row['coin__symbol'] for row in pending_deposit_rows if row['coin__symbol'])
+        symbols.update(row['coin__symbol'] for row in todays_deposit_rows if row['coin__symbol'])
+        symbols.update(w.coin.symbol for w in latest_withdraws if w.coin_id)
+        symbols.update(tx.coin.symbol for tx in recent_transactions if tx.coin_id)
+
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        # ---- Helper function ----
+        def summarize_amounts(rows):
+            total_count = 0
+            total_usd = Decimal("0")
+            for row in rows:
+                symbol = (row["coin__symbol"] or "").upper()
+                amount = row["total"] or Decimal("0")
+                count = row.get("count", 0) or 0
+                rate = price_map.get(symbol)
+                usd_value = amount * rate if rate else Decimal("0")
+                total_count += count
+                total_usd += usd_value
+            return total_count, total_usd
+
+        # ---- Summaries ----
+        total_balance_usd = Decimal("0")
+        coin_balances_raw = []
+        for row in balance_rows:
+            symbol = (row["coin__symbol"] or "").upper()
+            amount = row["total"] or Decimal("0")
+            rate = price_map.get(symbol)
+            usd_value = amount * rate if rate else Decimal("0")
+            total_balance_usd += usd_value
+            coin_balances_raw.append({
+                "symbol": symbol,
+                "amount": amount,
+                "usd_value": usd_value
+            })
+
+        coin_balances_raw.sort(key=lambda item: item["usd_value"], reverse=True)
+        coin_balances = [{"symbol": item["symbol"], "amount": str(item["amount"])} for item in coin_balances_raw[:3]]
+
+        pending_withdraw_count, pending_withdraw_usd = summarize_amounts(pending_withdraw_rows)
+        pending_deposit_count, pending_deposit_usd = summarize_amounts(pending_deposit_rows)
+        _, todays_deposits_usd = summarize_amounts(todays_deposit_rows)
+
+        # ---- Tickets ----
+        tickets_qs = Ticket.objects.select_related("user").order_by("-updated_at")[:5]
+        tickets_payload = [
+            {
+                "id": ticket.id,
+                "subject": ticket.subject,
+                "status": ticket.status,
+                "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
+            }
+            for ticket in tickets_qs
+        ]
+
+        # ---- Latest withdrawals ----
+        latest_withdrawals_payload = []
+        for withdraw in latest_withdraws:
+            symbol = (withdraw.coin.symbol or "").upper()
+            rate = price_map.get(symbol)
+            amount_usd = withdraw.amount * rate if rate else Decimal("0")
+            latest_withdrawals_payload.append({
+                "id": withdraw.id,
+                "user_id": withdraw.user_id,
+                "user_name": withdraw.user.full_name or "",
+                "user_email": withdraw.user.email,
+                "coin_symbol": symbol,
+                "amount_usd": str(amount_usd),
+                "status": withdraw.status,
+                "created_at": withdraw.created_at.isoformat() if withdraw.created_at else None,
+            })
+
+        # ---- Recent transactions ----
+        recent_transactions_payload = []
+        for tx in recent_transactions:
+            symbol = (tx.coin.symbol or "").upper()
+            rate = price_map.get(symbol)
+            amount_usd = tx.amount * rate if rate else Decimal("0")
+            recent_transactions_payload.append({
+                "id": tx.id,
+                "user_id": tx.user_id,
+                "user_name": tx.user.full_name or "",
+                "user_email": tx.user.email,
+                "coin_symbol": symbol,
+                "amount_usd": str(amount_usd),
+                "status": tx.status,
+                "transaction_type": tx.transaction_type,
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+            })
+
+        return Response({
+            "summary": {
+                "total_users": total_users,
+                "new_users_today": new_users_today,
+                "total_balance_usd": str(total_balance_usd),
+                "todays_deposits_usd": str(todays_deposits_usd),
+                "pending_withdrawals_count": pending_withdraw_count,
+                "pending_withdrawals_usd": str(pending_withdraw_usd),
+                "pending_deposits_count": pending_deposit_count,
+                "pending_deposits_usd": str(pending_deposit_usd),
+            },
+            "coin_balances": coin_balances,
+            "tickets": tickets_payload,
+            "latest_withdrawals": latest_withdrawals_payload,
+            "recent_transactions": recent_transactions_payload,
+        }, status=status.HTTP_200_OK)
+
+
+class AdminTransactionDetailAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            tx = Transaction.objects.select_related("user", "coin").get(pk=pk)
+        except Transaction.DoesNotExist:
+            return Response({"error": "Transaction not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            "id": tx.id,
+            "user_id": tx.user_id,
+            "user_name": tx.user.full_name or "",
+            "user_email": tx.user.email,
+            "user_status": tx.user.status,
+            "coin_symbol": getattr(tx.coin, "symbol", ""),
+            "amount": str(tx.amount),
+            "transaction_type": tx.transaction_type,
+            "status": tx.status,
+            "reference": tx.reference,
+            "internal_note": tx.internal_note,
+            "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        }, status=status.HTTP_200_OK)
+
+
+class AdminWithdrawDetailAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            withdraw = WithdrawRequest.objects.select_related(
+                "user", "coin", "network"
+            ).get(pk=pk)
+        except WithdrawRequest.DoesNotExist:
+            return Response({"error": "Withdraw request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        balances = WalletBalance.objects.filter(
+            user_id=withdraw.user_id
+        ).select_related("coin")
+
+        symbols = {
+            (getattr(b.coin, "symbol", "") or "").upper()
+            for b in balances
+        }
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        total_balance = Decimal("0")
+        for b in balances:
+            symbol = (getattr(b.coin, "symbol", "") or "").upper()
+            rate = price_map.get(symbol)
+            if not rate:
+                continue
+            total_balance += (b.balance * rate)
+
+        return Response({
+            "id": withdraw.id,
+            "user": withdraw.user_id,
+            "user_name": withdraw.user.full_name or "",
+            "user_email": withdraw.user.email,
+            "user_status": withdraw.user.status,
+            "user_balance": str(total_balance),
+            "coin_symbol": getattr(withdraw.coin, "symbol", ""),
+            "network_name": getattr(withdraw.network, "network_name", ""),
+            "wallet_address": withdraw.wallet_address,
+            "amount": str(withdraw.amount),
+            "convert_amount": str(withdraw.convert_amount) if withdraw.convert_amount is not None else None,
+            "status": withdraw.status,
+            "created_at": withdraw.created_at.isoformat() if withdraw.created_at else None,
+        }, status=status.HTTP_200_OK)

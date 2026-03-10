@@ -22,4 +22,7 @@ urlpatterns = [
     path("admin/deposit/<int:pk>/action/", AdminDepositActionAPI.as_view(), name="admin-deposit-action"),
     
     path("admin/withdraw/<int:pk>/action/", AdminWithdrawActionAPI.as_view(), name="admin-withdraw-action"),
+    path("admin/dashboard-stats/", AdminDashboardStatsAPI.as_view(), name="admin-dashboard-stats"),
+    path("admin/transactions/<int:pk>/", AdminTransactionDetailAPI.as_view(), name="admin-transaction-detail"),
+    path("admin/withdraws/<int:pk>/", AdminWithdrawDetailAPI.as_view(), name="admin-withdraw-detail"),
 ]
