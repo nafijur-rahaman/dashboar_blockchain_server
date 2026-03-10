@@ -149,3 +149,6 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL')
 
+# Coin price cache safety (seconds)
+COIN_PRICE_CACHE_MAX_AGE_SECONDS = int(os.getenv("COIN_PRICE_CACHE_MAX_AGE_SECONDS", "300"))
+

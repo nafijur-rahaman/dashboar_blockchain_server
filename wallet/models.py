@@ -45,3 +45,16 @@ class WalletAssignment(models.Model):
     
     def __str__(self):
         return f"{self.user.full_name} - {self.coin.symbol} ({self.network.network_name})"
+
+
+class CoinPrice(models.Model):
+    coin = models.OneToOneField(
+        CryptoCoin,
+        on_delete=models.CASCADE,
+        related_name="price",
+    )
+    price_usdt = models.DecimalField(max_digits=20, decimal_places=8)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.coin.symbol} : {self.price_usdt}"

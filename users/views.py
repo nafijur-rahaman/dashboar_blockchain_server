@@ -13,7 +13,6 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.db import IntegrityError
-from django.db.models.functions import Coalesce
 
 
 from .serializers import (
@@ -24,10 +23,12 @@ from .serializers import (
     PasswordChangeSerializer,
     ForgotPasswordRequestSerializer,
     ResetPasswordSerializer,
+    AdminUserDetailSerializer
 )
 from .models import User
 from .permissions import IsAdmin, IsUser, IsAdminOrUser
-from django.db.models import Sum,Value,DecimalField
+from django.utils import timezone
+from wallet.services.pricing import get_coin_prices
 
 logger = logging.getLogger(__name__)
 
@@ -41,26 +42,29 @@ class UserListView(APIView):
     permission_classes = [IsAdmin]
 
     def get(self, request):
-        users = User.objects.filter(role="user")
+        users = User.objects.filter(role="user").prefetch_related("balances__coin")
 
         status_filter = request.query_params.get("status")
         if status_filter in {"active", "inactive", "blocked"}:
             users = users.filter(status=status_filter)
 
 
-        users = users.annotate(
-            total_balance=Coalesce(
-                Sum("balances__balance"),
-                Value(0, output_field=DecimalField(max_digits=20, decimal_places=8))
-            )
-        )
-
         users = users.order_by("-id")
 
         paginator = UserListPagination()
         page = paginator.paginate_queryset(users, request, view=self)
 
-        serializer = AdminUserSerializer(page, many=True, context={"request": request})
+        symbols = set()
+        for user in page:
+            for balance in user.balances.all():
+                symbols.add((getattr(balance.coin, "symbol", "") or "").upper())
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        serializer = AdminUserSerializer(
+            page,
+            many=True,
+            context={"request": request, "price_map": price_map},
+        )
         return paginator.get_paginated_response(serializer.data)
 
 
@@ -69,11 +73,28 @@ class UserDetailView(APIView):
 
     def get(self, request, user_id):
         try:
-            user = User.objects.get(id=user_id, role="user")
-        except User.DoesNotExist:
-            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            user = User.objects.prefetch_related(
+                "transactions",
+                "balances__coin"
+            ).get(id=user_id, role="user")
 
-        serializer = AdminUserSerializer(user, context={"request": request})
+        except User.DoesNotExist:
+            return Response(
+                {"message": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        symbols = {
+            (getattr(balance.coin, "symbol", "") or "").upper()
+            for balance in user.balances.all()
+        }
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        serializer = AdminUserDetailSerializer(
+            user,
+            context={"request": request, "_coin_usd_rates": price_map},
+        )
+
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -149,10 +170,18 @@ class LoginView(APIView):
 
         if serializer.is_valid():
             user = serializer.validated_data["user"]
-            token, _ = Token.objects.get_or_create(user=user)
-            profile_pic_url = request.build_absolute_uri(user.profile_pic.url) if user.profile_pic else ""
 
-                
+            # update last login
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
+
+            token, _ = Token.objects.get_or_create(user=user)
+
+            profile_pic_url = (
+                request.build_absolute_uri(user.profile_pic.url)
+                if user.profile_pic else ""
+            )
+
             return Response({
                 "token": token.key,
                 "role": user.role,

@@ -60,6 +60,11 @@ class Transaction(models.Model):
         max_length=20, choices=TRANSACTION_TYPE
     )
     
+    internal_note = models.TextField(
+        blank=True,
+        null=True
+    )
+    
     status = models.CharField(max_length=20, choices=STATUS, default="success")
     
     reference = models.CharField(max_length=255, blank=True, null=True)

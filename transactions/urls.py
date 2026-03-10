@@ -9,17 +9,17 @@ urlpatterns = [
     
     path("withdraw/request/", CreateWithdrawRequestAPI.as_view(), name="create-withdraw-request"),
     path("withdraw/get-my-withdraws/", MyWithdrawRequestsAPI.as_view(), name="my-withdraw-requests"),
+    path("admin/all-withdraws/", AdminWithdrawListAPI.as_view(), name="admin-all-withdraws"),
 
 
     
     path("transactions/get-my-transaction-history/", TransactionHistoryAPI.as_view(), name="transaction-history"),
     path("transactions/get-my-balance/<int:coin_id>/", GetBalanceAPI.as_view(), name="get-balance"),
     
-    path("admin/balance/update/", AdminBalanceUpdateAPI.as_view(), name="admin-balance-update"),
+    path("admin/balance-adjust/", AdminBalanceAdjustmentAPI.as_view(), name="admin-balance-adjust"),
     
  
     path("admin/deposit/<int:pk>/action/", AdminDepositActionAPI.as_view(), name="admin-deposit-action"),
     
-    path("admin/all-withdraws/", AdminWithdrawListAPI.as_view(), name="admin-all-withdraws"),
     path("admin/withdraw/<int:pk>/action/", AdminWithdrawActionAPI.as_view(), name="admin-withdraw-action"),
 ]

@@ -4,9 +4,12 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
+from decimal import Decimal, ROUND_DOWN
+
+from transactions.models import Transaction
+from transactions.serializers import TransactionSerializer, WalletBalanceSerializer, WalletBalanceSerializer
 from .models import User
-from transactions.models import WalletBalance
-from django.db import models
+from wallet.services.pricing import get_coin_prices
 
 
 # user serializer
@@ -18,16 +21,77 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
-    balance = serializers.DecimalField(
-        max_digits=20,
-        decimal_places=8,
-        source="total_balance",
-        read_only=True
-    )
+    balance = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ["id", "full_name", "email", "balance", "status"]
+
+    def get_balance(self, obj):
+        balances = obj.balances.select_related("coin").all()
+        rates = self.context.get("price_map", {})
+
+        total_usdt = Decimal("0")
+        for balance in balances:
+            symbol = (getattr(balance.coin, "symbol", "") or "").upper()
+            rate = rates.get(symbol)
+            if not rate:
+                continue
+            total_usdt += Decimal(str(balance.balance)) * rate
+
+        return total_usdt.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
+
+class AdminTransactionSerializer(serializers.ModelSerializer):
+    coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
+    class Meta:
+        model = Transaction
+        fields = ['id', 'user', 'coin', 'coin_symbol', 'amount', 'transaction_type','status', 'reference','internal_note', 'created_at']
+
+class AdminUserDetailSerializer(serializers.ModelSerializer):
+    transactions = serializers.SerializerMethodField()
+    wallet_balances = WalletBalanceSerializer(many=True, read_only=True, source="balances")
+    total_balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "full_name", 'profile_pic', "address", "email", "total_balance", "status", "transactions", "wallet_balances","last_login"]
+        
+    def get_total_balance(self, obj):
+        balances = obj.balances.select_related("coin").all()
+        rates = self._get_coin_usd_rates(balances)
+
+        total_usdt = Decimal("0")
+        for balance in balances:
+            symbol = (getattr(balance.coin, "symbol", "") or "").upper()
+            rate = rates.get(symbol)
+            if not rate:
+                continue
+            total_usdt += Decimal(str(balance.balance)) * rate
+
+        return total_usdt.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
+
+    def get_transactions(self, obj):
+        queryset = obj.transactions.select_related("coin").order_by("-created_at")
+        return AdminTransactionSerializer(queryset, many=True).data
+
+    def _get_coin_usd_rates(self, balances):
+        # Cache rates in serializer context for reuse inside the same request lifecycle.
+        cache = self.context.setdefault("_coin_usd_rates", {})
+
+        symbols = {
+            (getattr(balance.coin, "symbol", "") or "").upper()
+            for balance in balances
+        }
+
+        missing_symbols = [symbol for symbol in symbols if symbol not in cache]
+        if not missing_symbols:
+            return cache
+
+        rates = get_coin_prices(missing_symbols)
+        cache.update(rates)
+
+        return cache
+
 
 # user register serializer
 

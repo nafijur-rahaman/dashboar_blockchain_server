@@ -2,9 +2,11 @@ from rest_framework import serializers
 from .models import WalletBalance, Transaction, DepositRequest, WithdrawRequest
 
 class WalletBalanceSerializer(serializers.ModelSerializer):
+    coin_name = serializers.ReadOnlyField(source="coin.name")
+    coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
     class Meta:
         model = WalletBalance
-        fields = ['id', 'user', 'coin', 'balance', 'updated_at']
+        fields = ['id', 'user', 'coin', 'coin_name', 'coin_symbol', 'balance', 'updated_at']
         
 class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -67,8 +69,8 @@ class AdminGetDepositSerializer(serializers.ModelSerializer):
         read_only_fields = ['status']
 
     def get_user_balance(self, obj):
-        balance_map = self.context.get("balance_map", {})
-        return balance_map.get((obj.user_id, obj.coin_id), 0)
+        total_balance_map = self.context.get("total_balance_map", {})
+        return total_balance_map.get(obj.user_id, 0)
 
     def get_wallet_address(self, obj):
         # precomputed wallet map
@@ -143,5 +145,15 @@ class AdminWithdrawSerializer(serializers.ModelSerializer):
         ]
 
     def get_user_balance(self, obj):
-        balance_map = self.context.get("balance_map", {})
-        return balance_map.get((obj.user_id, obj.coin_id), 0)
+        total_balance_map = self.context.get("total_balance_map", {})
+        return total_balance_map.get(obj.user_id, 0)
+
+
+
+class BalanceAdjustmentSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    coin_id = serializers.IntegerField()
+    amount = serializers.DecimalField(max_digits=20, decimal_places=8)
+    action = serializers.ChoiceField(choices=["add", "subtract"])
+    description = serializers.CharField(required=False)
+    internal_note = serializers.CharField(required=False)

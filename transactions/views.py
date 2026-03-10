@@ -3,103 +3,90 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN
 from django.db import transaction
-import json
-from urllib.parse import urlencode
-from urllib.request import urlopen
-from urllib.error import URLError, HTTPError
 
-from wallet.models import WalletAssignment
+from wallet.models import CryptoCoin, WalletAssignment
+from wallet.services.pricing import get_coin_prices
+from wallet.services.pricing import get_coin_price
 from .models import DepositRequest, WalletBalance, Transaction, WithdrawRequest
-from .serializers import DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer,AdminGetDepositSerializer, WithdrawRequestSerializer,AdminWithdrawSerializer
+from .serializers import BalanceAdjustmentSerializer, DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer, AdminGetDepositSerializer, WithdrawRequestSerializer, AdminWithdrawSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
 
-COINGECKO_ID_BY_SYMBOL = {
-    "BTC": "bitcoin",
-    "BITCOIN": "bitcoin",
-    "ETH": "ethereum",
-    "ETHEREUM": "ethereum",
-    "ETC": "ethereum-classic",
-    "ETHEREUMCLASSIC": "ethereum-classic",
-    "ETHEREUM_CLASSIC": "ethereum-classic",
-    "USDT": "tether",
-    "TETHER": "tether",
-}
+# ------------------ Admin: Update Wallet Balance ------------------#
 
-
-def get_coin_usd_rate(symbol: str):
-    normalized_symbol = (symbol or "").upper().replace(" ", "").replace("-", "").replace("/", "_")
-
-    if normalized_symbol == "USDT":
-        return Decimal("1")
-
-    coin_id = COINGECKO_ID_BY_SYMBOL.get(normalized_symbol)
-    if not coin_id:
-        return None
-
-    params = urlencode({"ids": coin_id, "vs_currencies": "usd"})
-    url = f"https://api.coingecko.com/api/v3/simple/price?{params}"
-
-    try:
-        with urlopen(url, timeout=6) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        usd_value = payload.get(coin_id, {}).get("usd")
-        if usd_value is None:
-            return None
-        usd_rate = Decimal(str(usd_value))
-        if usd_rate <= 0:
-            return None
-        return usd_rate
-    except (HTTPError, URLError, TimeoutError, ValueError, InvalidOperation):
-        return None
-
-
-
-#------------------ Admin: Update Wallet Balance ------------------#
-
-class AdminBalanceUpdateAPI(APIView):
+class AdminBalanceAdjustmentAPI(APIView):
     permission_classes = [IsAdmin]
 
     @transaction.atomic
     def post(self, request):
 
-        user_id = request.data.get("user")
-        coin_id = request.data.get("coin")
-        amount = Decimal(request.data.get("amount", "0"))
-        tx_type = request.data.get("type")
+        try:
 
-        balance, created = WalletBalance.objects.select_for_update().get_or_create(
-            user_id=user_id,
-            coin_id=coin_id
-        )
-
-        if tx_type == "admin_add":
-            balance.balance += amount
-
-        elif tx_type == "admin_deduct":
-            if balance.balance < amount:
-                return Response({"error": "Insufficient balance"}, status=400)
-
-            balance.balance -= amount
-
-        balance.save()
-
-        Transaction.objects.create(
-            user_id=user_id,
-            coin_id=coin_id,
-            amount=amount,
-            transaction_type=tx_type
-        )
-
-        return Response({
-            "message": "Balance updated",
-            "new_balance": balance.balance
-        })
-    
+            serializer = BalanceAdjustmentSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            user_id = data["user_id"]
+            coin_id = data["coin_id"]
+            amount = data["amount"]
+            action = data["action"]
+            ref = data.get(
+                "description", f"Admin balance {action} of {amount} for user {user_id} and coin {coin_id}")
+            internal_note = data.get("internal_note", "")
+            try:
+                coin = CryptoCoin.objects.get(id=coin_id)
+                # Lock wallet row to prevent race conditions
+                balance, _ = WalletBalance.objects.select_for_update().get_or_create(
+                    user_id=user_id,
+                    coin=coin,
+                    defaults={"balance": 0}
+                )
+                # Adjust balance atomically
+                if action == "add":
+                    balance.balance += amount
+                    tx_type = "admin_add"
+                else:  # subtract
+                    if balance.balance < amount:
+                        return Response({"error": "Insufficient balance"}, status=400)
+                    balance.balance -= amount
+                    tx_type = "admin_deduct"
+                balance.save(update_fields=["balance"])
+                # Record transaction
+                created_tx = Transaction.objects.create(
+                    user_id=user_id,
+                    coin=coin,
+                    amount=amount,
+                    transaction_type=tx_type,
+                    status="success",
+                    reference=ref,
+                    internal_note=internal_note,
+                )
+                return Response(
+                    {
+                        "message": "Balance adjusted successfully",
+                        "new_balance": balance.balance,
+                        "transaction": {
+                            "id": created_tx.id,
+                            "coin": coin.id,
+                            "coin_symbol": coin.symbol,
+                            "amount": str(created_tx.amount),
+                            "transaction_type": created_tx.transaction_type,
+                            "status": created_tx.status,
+                            "reference": created_tx.reference,
+                            "internal_note": created_tx.internal_note,
+                            "created_at": created_tx.created_at,
+                        },
+                    },
+                    status=status.HTTP_200_OK
+                )
+            except CryptoCoin.DoesNotExist:
+                    return Response({"error": "Coin not found"}, status=404)
+        except Exception as e:
+            return Response({"error": "Balance adjustment failed", "details": str(e)}, status=500)
 
 # ------------------ Get Wallet Balance ------------------#
+
 
 class GetBalanceAPI(APIView):
     permission_classes = [IsUser]
@@ -107,7 +94,8 @@ class GetBalanceAPI(APIView):
     def get(self, request, coin_id):
 
         try:
-            balance = WalletBalance.objects.select_related('coin').get(user=request.user, coin_id=coin_id)
+            balance = WalletBalance.objects.select_related(
+                'coin').get(user=request.user, coin_id=coin_id)
 
             serializer = WalletBalanceSerializer(balance)
 
@@ -120,15 +108,17 @@ class GetBalanceAPI(APIView):
             return Response({
                 "error": "No balance found for this coin"
             }, status=404)
-            
+
 # ------------------ Get Transaction History ------------------#
+
 
 class TransactionHistoryAPI(APIView):
     permission_classes = [IsUser]
 
     def get(self, request):
 
-        transactions = Transaction.objects.filter(user=request.user).order_by('-created_at')
+        transactions = Transaction.objects.filter(
+            user=request.user).order_by('-created_at')
 
         serializer = TransactionSerializer(transactions, many=True)
 
@@ -138,7 +128,7 @@ class TransactionHistoryAPI(APIView):
         })
 
 
-#------------------ Create deposit request ------------------#
+# ------------------ Create deposit request ------------------#
 
 class CreateDepositRequestAPI(APIView):
     permission_classes = [IsUser]
@@ -156,7 +146,7 @@ class CreateDepositRequestAPI(APIView):
                 coin=deposit.coin,
                 amount=deposit.amount,
                 transaction_type="deposit",
-                status="pending",  
+                status="pending",
                 reference=f"Deposit request ID {deposit.id}"
             )
 
@@ -166,16 +156,17 @@ class CreateDepositRequestAPI(APIView):
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
 
-#----------------- Get My deposits ------------------#
+
+# ----------------- Get My deposits ------------------#
 
 class MyDepositRequestsAPI(APIView):
     permission_classes = [IsUser]
 
     def get(self, request):
 
-        deposits = DepositRequest.objects.filter(user=request.user).order_by('-created_at')
+        deposits = DepositRequest.objects.filter(
+            user=request.user).order_by('-created_at')
 
         serializer = DepositRequestSerializer(deposits, many=True)
 
@@ -183,9 +174,9 @@ class MyDepositRequestsAPI(APIView):
             "message": "My deposit requests retrieved",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-        
 
-#----------------- Admin: Get all deposits ------------------#
+
+# ----------------- Admin: Get all deposits ------------------#
 
 class AllDepositRequestsAPI(APIView):
     permission_classes = [IsAdmin]
@@ -201,23 +192,41 @@ class AllDepositRequestsAPI(APIView):
 
         # PRE-COMPUTE balances
         balances = WalletBalance.objects.filter(
-            user_id__in=user_ids,
-            coin_id__in=coin_ids
-        ).values('user_id', 'coin_id', 'balance')
-        balance_map = {(b['user_id'], b['coin_id']): b['balance'] for b in balances}
+            user_id__in=user_ids
+        ).select_related("coin")
+        balance_map = {
+            (b.user_id, b.coin_id): b.balance
+            for b in balances
+        }
+
+        symbols = {
+            (getattr(b.coin, "symbol", "") or "").upper()
+            for b in balances
+        }
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        total_balance_map = {}
+        for b in balances:
+            symbol = (getattr(b.coin, "symbol", "") or "").upper()
+            rate = price_map.get(symbol)
+            if not rate:
+                continue
+            total_balance_map[b.user_id] = total_balance_map.get(b.user_id, 0) + (b.balance * rate)
 
         # PRE-COMPUTE wallet addresses
         wallet_addresses = WalletAssignment.objects.filter(
             user_id__in=user_ids,
             coin_id__in=coin_ids
         ).values('user_id', 'coin_id', 'wallet_address')
-        wallet_map = {(w['user_id'], w['coin_id']): w['wallet_address'] for w in wallet_addresses}
+        wallet_map = {(w['user_id'], w['coin_id']): w['wallet_address']
+                      for w in wallet_addresses}
 
         serializer = AdminGetDepositSerializer(
             deposits,
             many=True,
             context={
                 "balance_map": balance_map,
+                "total_balance_map": total_balance_map,
                 "wallet_map": wallet_map
             }
         )
@@ -226,7 +235,7 @@ class AllDepositRequestsAPI(APIView):
             "message": "All deposit requests retrieved",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-        
+
 
 # ----------------- Admin: Approve/Reject deposit ------------------#
 
@@ -282,7 +291,6 @@ class AdminDepositActionAPI(APIView):
 
                 return Response({"message": "Deposit approved"})
 
-
             # ======================
             # REJECT DEPOSIT
             # ======================
@@ -296,7 +304,6 @@ class AdminDepositActionAPI(APIView):
                 ).update(status="failed")
 
                 return Response({"message": "Deposit rejected"})
-
 
         except DepositRequest.DoesNotExist:
             return Response({"error": "Deposit not found"}, status=404)
@@ -315,7 +322,6 @@ class AdminDepositActionAPI(APIView):
                 {"error": "Deposit processing failed", "details": str(e)},
                 status=500
             )
-            
 
 
 class CreateWithdrawRequestAPI(APIView):
@@ -329,7 +335,7 @@ class CreateWithdrawRequestAPI(APIView):
 
             coin = serializer.validated_data["coin"]
             amount = serializer.validated_data["amount"]
-            usd_rate = get_coin_usd_rate(getattr(coin, "symbol", ""))
+            usd_rate = get_coin_price(getattr(coin, "symbol", ""))
 
             if usd_rate is None:
                 return Response({
@@ -366,12 +372,12 @@ class CreateWithdrawRequestAPI(APIView):
                         user=request.user,
                         convert_amount=convert_amount,
                     )
-                    
+
                     Transaction.objects.create(
                         user=request.user,
                         coin=coin,
                         amount=amount,
-                        reference = f"Withdraw request Id {withdraw.id}",
+                        reference=f"Withdraw request Id {withdraw.id}",
                         transaction_type="withdraw",
                         status="pending"
                     )
@@ -387,7 +393,7 @@ class CreateWithdrawRequestAPI(APIView):
             }, status=201)
 
         return Response(serializer.errors, status=400)
-    
+
 
 class MyWithdrawRequestsAPI(APIView):
     permission_classes = [IsAuthenticated]
@@ -401,7 +407,7 @@ class MyWithdrawRequestsAPI(APIView):
         serializer = WithdrawRequestSerializer(withdraws, many=True)
 
         return Response(serializer.data)
-    
+
 
 class AdminWithdrawListAPI(APIView):
     permission_classes = [IsAdmin]
@@ -416,26 +422,35 @@ class AdminWithdrawListAPI(APIView):
         coin_ids = set(w.coin_id for w in withdraws)
 
         balances = WalletBalance.objects.filter(
-            user_id__in=user_ids,
-            coin_id__in=coin_ids
-        ).values("user_id", "coin_id", "balance")
+            user_id__in=user_ids
+        ).select_related("coin")
 
-        balance_map = {
-            (b["user_id"], b["coin_id"]): b["balance"]
+        symbols = {
+            (getattr(b.coin, "symbol", "") or "").upper()
             for b in balances
         }
+        price_map = get_coin_prices(symbols) if symbols else {}
+
+        total_balance_map = {}
+        for b in balances:
+            symbol = (getattr(b.coin, "symbol", "") or "").upper()
+            rate = price_map.get(symbol)
+            if not rate:
+                continue
+            total_balance_map[b.user_id] = total_balance_map.get(b.user_id, 0) + (b.balance * rate)
 
         serializer = AdminWithdrawSerializer(
             withdraws,
             many=True,
-            context={"balance_map": balance_map}
+            context={
+                "total_balance_map": total_balance_map,
+            }
         )
 
         return Response({
             "message": "All withdraw requests retrieved",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-    
 
 
 class AdminWithdrawActionAPI(APIView):
@@ -466,7 +481,6 @@ class AdminWithdrawActionAPI(APIView):
 
                     return Response({"message": "Withdraw approved"})
 
-
                 elif action == "reject":
 
                     balance = WalletBalance.objects.select_for_update().get(
@@ -485,7 +499,6 @@ class AdminWithdrawActionAPI(APIView):
                     ).update(status="failed")
 
                     return Response({"message": "Withdraw rejected"})
-
 
                 return Response({"error": "Invalid action"}, status=400)
 
