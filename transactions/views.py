@@ -13,6 +13,7 @@ from .models import DepositRequest, WalletBalance, Transaction, WithdrawRequest
 from .serializers import BalanceAdjustmentSerializer, DepositRequestSerializer, WalletBalanceSerializer, TransactionSerializer, AdminGetDepositSerializer, WithdrawRequestSerializer, AdminWithdrawSerializer
 
 from users.permissions import IsAdmin, IsUser, IsAdminOrUser
+from notifications.utils import create_admin_notification, create_user_notification
 
 # ------------------ Admin: Update Wallet Balance ------------------#
 
@@ -148,6 +149,20 @@ class CreateDepositRequestAPI(APIView):
                 transaction_type="deposit",
                 status="pending",
                 reference=f"Deposit request ID {deposit.id}"
+            )
+
+            create_admin_notification(
+                title="New deposit request",
+                message=f"User {request.user.email} requested deposit #{deposit.id}.",
+                notif_type="deposit_requested",
+                data={"deposit_id": deposit.id},
+            )
+            create_user_notification(
+                user=request.user,
+                title="Deposit request submitted",
+                message=f"Your deposit request #{deposit.id} was submitted.",
+                notif_type="deposit_requested",
+                data={"deposit_id": deposit.id},
             )
 
             return Response({
@@ -289,6 +304,14 @@ class AdminDepositActionAPI(APIView):
                 deposit.status = "approved"
                 deposit.save(update_fields=["status"])
 
+                create_user_notification(
+                    user=deposit.user,
+                    title="Deposit approved",
+                    message=f"Your deposit request #{deposit.id} was approved.",
+                    notif_type="deposit_approved",
+                    data={"deposit_id": deposit.id},
+                )
+
                 return Response({"message": "Deposit approved"})
 
             # ======================
@@ -302,6 +325,14 @@ class AdminDepositActionAPI(APIView):
                 Transaction.objects.filter(
                     reference=f"Deposit request ID {deposit.id}"
                 ).update(status="failed")
+
+                create_user_notification(
+                    user=deposit.user,
+                    title="Deposit rejected",
+                    message=f"Your deposit request #{deposit.id} was rejected.",
+                    notif_type="deposit_rejected",
+                    data={"deposit_id": deposit.id},
+                )
 
                 return Response({"message": "Deposit rejected"})
 
@@ -386,6 +417,20 @@ class CreateWithdrawRequestAPI(APIView):
                 return Response({
                     "error": "No balance available"
                 }, status=400)
+
+            create_admin_notification(
+                title="New withdraw request",
+                message=f"User {request.user.email} requested withdraw #{withdraw.id}.",
+                notif_type="withdraw_requested",
+                data={"withdraw_id": withdraw.id},
+            )
+            create_user_notification(
+                user=request.user,
+                title="Withdraw request submitted",
+                message=f"Your withdraw request #{withdraw.id} was submitted.",
+                notif_type="withdraw_requested",
+                data={"withdraw_id": withdraw.id},
+            )
 
             return Response({
                 "message": "Withdraw request submitted",
@@ -479,6 +524,14 @@ class AdminWithdrawActionAPI(APIView):
                         reference=f"Withdraw request Id {withdraw.id}"
                     ).update(status="success")
 
+                    create_user_notification(
+                        user=withdraw.user,
+                        title="Withdraw approved",
+                        message=f"Your withdraw request #{withdraw.id} was approved.",
+                        notif_type="withdraw_approved",
+                        data={"withdraw_id": withdraw.id},
+                    )
+
                     return Response({"message": "Withdraw approved"})
 
                 elif action == "reject":
@@ -497,6 +550,14 @@ class AdminWithdrawActionAPI(APIView):
                     Transaction.objects.filter(
                         reference=f"Withdraw request Id {withdraw.id}"
                     ).update(status="failed")
+
+                    create_user_notification(
+                        user=withdraw.user,
+                        title="Withdraw rejected",
+                        message=f"Your withdraw request #{withdraw.id} was rejected.",
+                        notif_type="withdraw_rejected",
+                        data={"withdraw_id": withdraw.id},
+                    )
 
                     return Response({"message": "Withdraw rejected"})
 

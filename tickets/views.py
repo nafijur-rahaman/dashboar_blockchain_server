@@ -10,6 +10,7 @@ from .models import Ticket, TicketMessage
 from .serializers import TicketMessageSerializer, TicketSerializer, CreateTicketSerializer
 
 from users.permissions import IsUser, IsAdmin, IsAdminOrUser
+from notifications.utils import create_admin_notification, create_user_notification
 
 
 class CreateTicketAPI(APIView):
@@ -26,6 +27,20 @@ class CreateTicketAPI(APIView):
         if serializer.is_valid():
 
             ticket = serializer.save()
+
+            create_admin_notification(
+                title="New support ticket",
+                message=f"Ticket #{ticket.id} created: {ticket.subject}",
+                notif_type="ticket_created",
+                data={"ticket_id": ticket.id},
+            )
+            create_user_notification(
+                user=request.user,
+                title="Ticket created",
+                message=f"Your ticket #{ticket.id} was created successfully.",
+                notif_type="ticket_created",
+                data={"ticket_id": ticket.id},
+            )
 
             return Response({
                 "message": "Ticket created successfully",
@@ -121,6 +136,31 @@ class ReplyTicketAPI(APIView):
 
         ticket.save()
 
+        if is_admin:
+            if status_value == "closed":
+                create_user_notification(
+                    user=ticket.user,
+                    title="Ticket closed",
+                    message=f"Your ticket #{ticket.id} was closed by admin.",
+                    notif_type="ticket_closed",
+                    data={"ticket_id": ticket.id},
+                )
+            else:
+                create_user_notification(
+                    user=ticket.user,
+                    title="Admin replied",
+                    message=f"Admin replied to your ticket #{ticket.id}.",
+                    notif_type="ticket_reply",
+                    data={"ticket_id": ticket.id},
+                )
+        else:
+            create_admin_notification(
+                title="New ticket reply",
+                message=f"User replied to ticket #{ticket.id}.",
+                notif_type="ticket_reply",
+                data={"ticket_id": ticket.id},
+            )
+
         return Response({"message": "Reply sent successfully"})
     
     
@@ -146,6 +186,14 @@ class CloseTicketAPI(APIView):
 
         ticket.status = "closed"
         ticket.save()
+
+        create_user_notification(
+            user=ticket.user,
+            title="Ticket closed",
+            message=f"Your ticket #{ticket.id} was closed by admin.",
+            notif_type="ticket_closed",
+            data={"ticket_id": ticket.id},
+        )
 
         return Response({
             "message": "Ticket closed"

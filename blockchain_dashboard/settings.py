@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'users',
     'wallet',
     'transactions',
-    'tickets'
+    'tickets',
+    'notifications',
 ]
 
 AUTH_USER_MODEL = 'users.User'
@@ -56,6 +57,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = True # for dev
