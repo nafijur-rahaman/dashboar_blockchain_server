@@ -19,7 +19,7 @@ SECRET_KEY = 'django-insecure-ara#ap8*5+yno_enxhcyz+mwp+cu304gvf0hbik+_7&w4fg8gh
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["165.227.104.239", "api.dashboardblockchain.com", "localhost", "127.0.0.1"]
 
 
 # Application definition
@@ -93,6 +93,19 @@ DATABASES = {
     }
 }
 
+## postgres database setup
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('DB_NAME'),
+#         'USER': os.environ.get('DB_USER'),
+#         'PASSWORD': os.environ.get('DB_PASSWORD'),
+#         'HOST': os.environ.get('DB_HOST', 'localhost'),
+#         'PORT': os.environ.get('DB_PORT', '5432'),
+#     }
+# }
+
 # authentication settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -139,6 +152,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 MEDIA_URL = 'media/'
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
 # Frontend URL for reset-password links
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
