@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 import logging
 from smtplib import SMTPException
@@ -23,7 +24,8 @@ from .serializers import (
     PasswordChangeSerializer,
     ForgotPasswordRequestSerializer,
     ResetPasswordSerializer,
-    AdminUserDetailSerializer
+    AdminUserDetailSerializer,
+    UserProfileUpdateSerializer
 )
 from .models import User
 from .permissions import IsAdmin, IsUser, IsAdminOrUser
@@ -281,6 +283,7 @@ class LogoutView(APIView):
 
 class UserMeView(APIView):
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         user = request.user
@@ -289,3 +292,24 @@ class UserMeView(APIView):
         data["fullname"] = user.full_name if user.full_name else ""
         data["profile_pic"] = request.build_absolute_uri(user.profile_pic.url) if user.profile_pic else ""
         return Response(data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        serializer = UserProfileUpdateSerializer(
+            request.user,
+            data=request.data,
+            partial=True
+        )
+        if serializer.is_valid():
+            user = serializer.save()
+            response = UserSerializer(user, context={"request": request}).data
+            response["fullname"] = user.full_name if user.full_name else ""
+            response["profile_pic"] = (
+                request.build_absolute_uri(user.profile_pic.url)
+                if user.profile_pic else ""
+            )
+            return Response(response, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request):
+        return self.patch(request)

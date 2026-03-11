@@ -20,6 +20,12 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'full_name', 'phone', 'address', 'profile_pic', 'role']
 
 
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['full_name', 'phone', 'address', 'profile_pic']
+
+
 class AdminUserSerializer(serializers.ModelSerializer):
     balance = serializers.SerializerMethodField()
 
