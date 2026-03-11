@@ -9,9 +9,10 @@ class WalletBalanceSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'coin', 'coin_name', 'coin_symbol', 'balance', 'updated_at']
         
 class TransactionSerializer(serializers.ModelSerializer):
+    coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
     class Meta:
         model = Transaction
-        fields = ['id', 'user', 'coin', 'amount', 'transaction_type','status', 'reference', 'created_at']
+        fields = ['id', 'user', 'coin', 'coin_symbol', 'amount', 'transaction_type','status', 'reference', 'created_at']
         
 class DepositRequestSerializer(serializers.ModelSerializer):
 

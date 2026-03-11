@@ -394,14 +394,15 @@ class CreateWithdrawRequestAPI(APIView):
                         coin=coin
                     )
 
-                    if balance.balance < amount:
+                    # Compare against coin balance using converted coin amount
+                    if balance.balance < convert_amount:
                         return Response({
                             "error": "Insufficient balance"
                         }, status=400)
 
                     # deduct balance immediately
-                    balance.balance -= amount
-                    balance.save()
+                    balance.balance -= convert_amount
+                    balance.save(update_fields=["balance"])
 
                     withdraw = serializer.save(
                         user=request.user,
@@ -411,7 +412,7 @@ class CreateWithdrawRequestAPI(APIView):
                     Transaction.objects.create(
                         user=request.user,
                         coin=coin,
-                        amount=amount,
+                        amount=convert_amount,
                         reference=f"Withdraw request Id {withdraw.id}",
                         transaction_type="withdraw",
                         status="pending"
@@ -422,16 +423,36 @@ class CreateWithdrawRequestAPI(APIView):
                     "error": "No balance available"
                 }, status=400)
 
+            amount_usd = amount
+            coin_symbol = (getattr(coin, "symbol", "") or "").upper()
+            network_name = getattr(
+                serializer.validated_data.get("network"), "network_name", ""
+            )
+            wallet_address = serializer.validated_data.get("wallet_address", "")
+            address_short = (
+                f"{wallet_address[:6]}...{wallet_address[-4:]}"
+                if wallet_address and len(wallet_address) > 12
+                else wallet_address
+            )
+
             create_admin_notification(
                 title="New withdraw request",
-                message=f"User {request.user.email} requested withdraw #{withdraw.id}.",
+                message=(
+                    f"Withdraw requested: {request.user.email} requested "
+                    f"{amount_usd} USD (~{convert_amount} {coin_symbol}) "
+                    f"on {network_name or 'network'}. Wallet: {address_short}."
+                ),
                 notif_type="withdraw_requested",
                 data={"withdraw_id": withdraw.id},
             )
             create_user_notification(
                 user=request.user,
                 title="Withdraw request submitted",
-                message=f"Your withdraw request #{withdraw.id} was submitted.",
+                message=(
+                    f"Your withdrawal request of {amount_usd} USD "
+                    f"(~{convert_amount} {coin_symbol}) on "
+                    f"{network_name or 'network'} was submitted."
+                ),
                 notif_type="withdraw_requested",
                 data={"withdraw_id": withdraw.id},
             )
@@ -531,7 +552,13 @@ class AdminWithdrawActionAPI(APIView):
                     create_user_notification(
                         user=withdraw.user,
                         title="Withdraw approved",
-                        message=f"Your withdraw request #{withdraw.id} was approved.",
+                        message=(
+                            f"Your withdrawal of {withdraw.amount} USD "
+                            f"(~{withdraw.convert_amount} "
+                            f"{(withdraw.coin.symbol or '').upper()}) on "
+                            f"{getattr(withdraw.network, 'network_name', '') or 'network'} "
+                            f"was approved."
+                        ),
                         notif_type="withdraw_approved",
                         data={"withdraw_id": withdraw.id},
                     )
@@ -545,8 +572,9 @@ class AdminWithdrawActionAPI(APIView):
                         coin=withdraw.coin
                     )
 
-                    balance.balance += withdraw.amount
-                    balance.save()
+                    refund_amount = withdraw.convert_amount if withdraw.convert_amount is not None else withdraw.amount
+                    balance.balance += refund_amount
+                    balance.save(update_fields=["balance"])
 
                     withdraw.status = "rejected"
                     withdraw.save()
@@ -558,7 +586,14 @@ class AdminWithdrawActionAPI(APIView):
                     create_user_notification(
                         user=withdraw.user,
                         title="Withdraw rejected",
-                        message=f"Your withdraw request #{withdraw.id} was rejected.",
+                        message=(
+                            f"Your withdrawal of {withdraw.amount} USD "
+                            f"(~{withdraw.convert_amount} "
+                            f"{(withdraw.coin.symbol or '').upper()}) on "
+                            f"{getattr(withdraw.network, 'network_name', '') or 'network'} "
+                            f"was rejected. The {refund_amount} "
+                            f"{(withdraw.coin.symbol or '').upper()} has been returned to your balance."
+                        ),
                         notif_type="withdraw_rejected",
                         data={"withdraw_id": withdraw.id},
                     )
@@ -632,6 +667,17 @@ class AdminDashboardStatsAPI(APIView):
                 total_count += count
                 total_usd += usd_value
             return total_count, total_usd
+        
+        # Withdraw amounts are already in USD in this system
+        def summarize_usd_amounts(rows):
+            total_count = 0
+            total_usd = Decimal("0")
+            for row in rows:
+                amount = row["total"] or Decimal("0")
+                count = row.get("count", 0) or 0
+                total_count += count
+                total_usd += amount
+            return total_count, total_usd
 
         # ---- Summaries ----
         total_balance_usd = Decimal("0")
@@ -651,7 +697,7 @@ class AdminDashboardStatsAPI(APIView):
         coin_balances_raw.sort(key=lambda item: item["usd_value"], reverse=True)
         coin_balances = [{"symbol": item["symbol"], "amount": str(item["amount"])} for item in coin_balances_raw[:3]]
 
-        pending_withdraw_count, pending_withdraw_usd = summarize_amounts(pending_withdraw_rows)
+        pending_withdraw_count, pending_withdraw_usd = summarize_usd_amounts(pending_withdraw_rows)
         pending_deposit_count, pending_deposit_usd = summarize_amounts(pending_deposit_rows)
         _, todays_deposits_usd = summarize_amounts(todays_deposit_rows)
 
@@ -670,15 +716,13 @@ class AdminDashboardStatsAPI(APIView):
         # ---- Latest withdrawals ----
         latest_withdrawals_payload = []
         for withdraw in latest_withdraws:
-            symbol = (withdraw.coin.symbol or "").upper()
-            rate = price_map.get(symbol)
-            amount_usd = withdraw.amount * rate if rate else Decimal("0")
+            amount_usd = withdraw.amount
             latest_withdrawals_payload.append({
                 "id": withdraw.id,
                 "user_id": withdraw.user_id,
                 "user_name": withdraw.user.full_name or "",
                 "user_email": withdraw.user.email,
-                "coin_symbol": symbol,
+                "coin_symbol": (withdraw.coin.symbol or "").upper(),
                 "amount_usd": str(amount_usd),
                 "status": withdraw.status,
                 "created_at": withdraw.created_at.isoformat() if withdraw.created_at else None,
@@ -825,15 +869,10 @@ class UserDashboardStatsAPI(APIView):
             .values("coin__symbol")
             .annotate(total=Sum("amount"))
         )
-        pending_symbols = [row["coin__symbol"] for row in pending_withdrawals if row["coin__symbol"]]
-        pending_price_map = get_coin_prices(pending_symbols) if pending_symbols else {}
         pending_withdrawals_usd = Decimal("0")
         for row in pending_withdrawals:
-            symbol = (row["coin__symbol"] or "").upper()
             amount = row["total"] or Decimal("0")
-            rate = pending_price_map.get(symbol)
-            if rate:
-                pending_withdrawals_usd += amount * rate
+            pending_withdrawals_usd += amount
 
         transactions = (
             Transaction.objects.filter(user=user)
