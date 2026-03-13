@@ -127,6 +127,7 @@ class UnblockUserView(APIView):
         except User.DoesNotExist:
             return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+
 # user register view
 class RegisterView(APIView):
     def post(self, request):

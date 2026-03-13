@@ -932,7 +932,7 @@ class UserDashboardStatsAPI(APIView):
         transactions = (
             Transaction.objects.filter(user=user)
             .select_related("coin")
-            .order_by("-created_at")[:8]
+            .order_by("-created_at")[:6]
         )
         tx_symbols = {tx.coin.symbol.upper() for tx in transactions if tx.coin_id}
         tx_price_map = get_coin_prices(tx_symbols) if tx_symbols else {}
