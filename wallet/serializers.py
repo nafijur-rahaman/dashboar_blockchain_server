@@ -2,6 +2,15 @@ from rest_framework import serializers
 from .models import CryptoCoin, CryptoNetwork, WalletAssignment
 
 
+SYMBOL_ALIASES = {
+    "USD": "USDT",
+}
+
+
+def _normalize_symbol(value: str) -> str:
+    return (value or "").upper().strip().replace(" ", "").replace("-", "").replace("/", "_")
+
+
 class CryptoNetworkSerializer(serializers.ModelSerializer):
     class Meta:
         model = CryptoNetwork
@@ -13,6 +22,12 @@ class CryptoCoinSerializer(serializers.ModelSerializer):
     class Meta:
         model = CryptoCoin
         fields = ['id', 'name', 'symbol', 'is_active', 'networks']
+
+    def validate_symbol(self, value):
+        normalized = _normalize_symbol(value)
+        if not normalized:
+            raise serializers.ValidationError("Symbol is required.")
+        return SYMBOL_ALIASES.get(normalized, normalized)
 
     def create(self, validated_data):
         networks_data = validated_data.pop('networks', [])

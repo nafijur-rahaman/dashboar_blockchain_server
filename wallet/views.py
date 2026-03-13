@@ -21,6 +21,15 @@ class CoinNetworkListAPI(APIView):
         return Response(serializer.data)
 
 
+class AdminCoinListAPI(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        coins = CryptoCoin.objects.all().order_by('name')
+        serializer = CryptoCoinSerializer(coins, many=True)
+        return Response(serializer.data)
+
+
 class CryptoCoinView(APIView):
     permission_classes = [IsAdmin]
     

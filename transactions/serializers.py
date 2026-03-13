@@ -46,6 +46,13 @@ class DepositRequestSerializer(serializers.ModelSerializer):
             'network_name'
         ]
         read_only_fields = ['status']
+
+    def validate(self, data):
+        tx_hash = data.get("tx_hash")
+        if not tx_hash or not str(tx_hash).strip():
+            raise serializers.ValidationError({"tx_hash": "Transaction hash is required."})
+        data["tx_hash"] = str(tx_hash).strip()
+        return data
     
 class AdminGetDepositSerializer(serializers.ModelSerializer):
     user_name = serializers.ReadOnlyField(source="user.full_name")
