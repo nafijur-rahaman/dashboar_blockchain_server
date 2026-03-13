@@ -8,6 +8,7 @@ urlpatterns = [
     path("admin/all-deposits/", AllDepositRequestsAPI.as_view(), name="all-deposit-requests"),
     
     path("withdraw/request/", CreateWithdrawRequestAPI.as_view(), name="create-withdraw-request"),
+    path("withdraw/quote/", WithdrawQuoteAPI.as_view(), name="withdraw-quote"),
     path("withdraw/get-my-withdraws/", MyWithdrawRequestsAPI.as_view(), name="my-withdraw-requests"),
     path("admin/all-withdraws/", AdminWithdrawListAPI.as_view(), name="admin-all-withdraws"),
 

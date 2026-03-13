@@ -4,9 +4,21 @@ from .models import WalletBalance, Transaction, DepositRequest, WithdrawRequest
 class WalletBalanceSerializer(serializers.ModelSerializer):
     coin_name = serializers.ReadOnlyField(source="coin.name")
     coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
+    usd_value = serializers.SerializerMethodField()
     class Meta:
         model = WalletBalance
-        fields = ['id', 'user', 'coin', 'coin_name', 'coin_symbol', 'balance', 'updated_at']
+        fields = ['id', 'user', 'coin', 'coin_name', 'coin_symbol', 'balance', 'usd_value', 'updated_at']
+
+    def get_usd_value(self, obj):
+        rates = self.context.get("price_map") or self.context.get("_coin_usd_rates") or {}
+        symbol = (getattr(obj.coin, "symbol", "") or "").upper()
+        rate = rates.get(symbol)
+        if not rate:
+            return "0"
+        try:
+            return str(obj.balance * rate)
+        except Exception:
+            return "0"
         
 class TransactionSerializer(serializers.ModelSerializer):
     coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
@@ -41,6 +53,7 @@ class AdminGetDepositSerializer(serializers.ModelSerializer):
     user_status = serializers.ReadOnlyField(source="user.status")
     coin_symbol = serializers.ReadOnlyField(source="coin.symbol")
     network_name = serializers.ReadOnlyField(source="network.network_name")
+    amount_usd = serializers.SerializerMethodField()
 
     # balance for this deposit's coin
     user_balance = serializers.SerializerMethodField()
@@ -60,6 +73,7 @@ class AdminGetDepositSerializer(serializers.ModelSerializer):
             'network',
             'network_name',
             'amount',
+            'amount_usd',
             'tx_hash',
             'proof',
             'status',
@@ -77,6 +91,14 @@ class AdminGetDepositSerializer(serializers.ModelSerializer):
         # precomputed wallet map
         wallet_map = self.context.get("wallet_map", {})
         return wallet_map.get((obj.user_id, obj.coin_id))
+    
+    def get_amount_usd(self, obj):
+        price_map = self.context.get("price_map", {})
+        symbol = (getattr(obj.coin, "symbol", "") or "").upper()
+        rate = price_map.get(symbol)
+        if not rate:
+            return 0
+        return obj.amount * rate
     
     
 

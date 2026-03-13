@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, InvalidOperation
 from django.db import transaction
 from django.db.models import Sum, Count
 from django.utils import timezone
@@ -222,6 +222,11 @@ class AllDepositRequestsAPI(APIView):
             (getattr(b.coin, "symbol", "") or "").upper()
             for b in balances
         }
+        symbols.update(
+            (getattr(d.coin, "symbol", "") or "").upper()
+            for d in deposits
+            if d.coin_id
+        )
         price_map = get_coin_prices(symbols) if symbols else {}
 
         total_balance_map = {}
@@ -246,7 +251,8 @@ class AllDepositRequestsAPI(APIView):
             context={
                 "balance_map": balance_map,
                 "total_balance_map": total_balance_map,
-                "wallet_map": wallet_map
+                "wallet_map": wallet_map,
+                "price_map": price_map,
             }
         )
 
@@ -463,6 +469,55 @@ class CreateWithdrawRequestAPI(APIView):
             }, status=201)
 
         return Response(serializer.errors, status=400)
+
+
+class WithdrawQuoteAPI(APIView):
+    permission_classes = [IsUser]
+
+    def post(self, request):
+        coin_id = request.data.get("coin")
+        amount = request.data.get("amount")
+
+        if not coin_id:
+            return Response({"error": "Coin is required"}, status=400)
+
+        try:
+            amount = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({"error": "Invalid amount"}, status=400)
+
+        if amount <= 0:
+            return Response({"error": "Amount must be greater than 0"}, status=400)
+
+        try:
+            coin = CryptoCoin.objects.get(id=coin_id)
+        except CryptoCoin.DoesNotExist:
+            return Response({"error": "Coin not found"}, status=404)
+
+        usd_rate = get_coin_price(getattr(coin, "symbol", ""))
+        if usd_rate is None:
+            return Response(
+                {"error": "Live conversion rate unavailable. Please try again in a moment."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        convert_amount = (amount / usd_rate).quantize(
+            Decimal("0.00000001"),
+            rounding=ROUND_DOWN,
+        )
+
+        if convert_amount <= 0:
+            return Response({"error": "Amount is too small after conversion."}, status=400)
+
+        return Response(
+            {
+                "coin_symbol": (getattr(coin, "symbol", "") or "").upper(),
+                "amount_usd": str(amount),
+                "rate_usd": str(usd_rate),
+                "convert_amount": str(convert_amount),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class MyWithdrawRequestsAPI(APIView):
