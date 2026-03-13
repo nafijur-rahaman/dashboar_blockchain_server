@@ -31,3 +31,6 @@ Thumbs.db
 venv/
 ENV/
 env/
+
+profile_pics
+ticket_messages
