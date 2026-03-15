@@ -7,9 +7,6 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 import logging
-from smtplib import SMTPException
-from django.conf import settings
-from django.core.mail import send_mail
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -218,44 +215,34 @@ class ForgotPasswordRequestView(APIView):
     permission_classes = []
 
     def post(self, request):
-        serializer = ForgotPasswordRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        email = serializer.validated_data["email"]
-        user = User.objects.filter(email=email).first()
-        if not user:
-            return Response(
-                {"message": "Email does not exist."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
-        frontend_base_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
-        reset_link = f"{frontend_base_url}/forgot-password?uid={uid}&token={token}"
-
         try:
-            sent_count = send_mail(
-                subject="Reset your password",
-                message=f"Use this link to reset your password: {reset_link}",
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@example.com"),
-                recipient_list=[email],
-                fail_silently=False,
+            serializer = ForgotPasswordRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            email = serializer.validated_data["email"]
+            user = User.objects.filter(email=email).first()
+            if not user:
+                return Response(
+                    {"message": "Email does not exist."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            return Response(
+                {
+                    "message": "Email verified. Use the token to reset your password.",
+                    "uid": uid,
+                    "token": token,
+                },
+                status=status.HTTP_200_OK
             )
-
-            if sent_count == 0:
-                logger.warning("Reset email was not sent to %s (send_mail returned 0).", email)
-        except SMTPException:
-            logger.exception("SMTP error while sending reset email to %s", email)
-        except Exception:
-            logger.exception("Unexpected error while sending reset email to %s", email)
-
-        return Response(
-            {"message": "Reset link sent to your email."},
-            status=status.HTTP_200_OK
-        )
-
+        except Exception as e:
+            return Response(
+                {"message": "An error occurred while processing the request.", "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class ResetPasswordView(APIView):
     permission_classes = []
